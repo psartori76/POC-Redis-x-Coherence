@@ -120,6 +120,8 @@ public final class App {
         /*
          * Aqui os dois produtos sao registrados atras do contrato comum. O valor
          * ACTIVE_CACHE_BACKEND define quem atende primeiro quando a app sobe.
+         * Depois disso a aplicacao conversa com SwitchingCacheProvider como se
+         * houvesse um cache unico.
          */
         SwitchingCacheProvider cacheProvider = new SwitchingCacheProvider(
                 activeCache,
@@ -217,6 +219,9 @@ public final class App {
          * 3. se nao encontrou, busca no Oracle;
          * 4. grava o resultado no cache ativo;
          * 5. responde cacheHit=false.
+         *
+         * O cliente sempre chama GET /products/{id}. A escolha Redis x Coherence
+         * acontece aqui dentro, ao resolver cacheProvider.activeProvider().
          */
         long requestStart = System.nanoTime();
         CacheProvider provider = cacheProvider.activeProvider();
@@ -439,6 +444,7 @@ public final class App {
                 /*
                  * Troca dinamicamente o backend. Nao reinicia a JVM, nao muda o
                  * codigo de negocio e nao altera o Oracle Database.
+                 * A proxima chamada /products/{id} ja passa pelo novo provider.
                  */
                 String backend = path.substring("/cache/backend/".length()).toLowerCase();
                 if ("toggle".equals(backend)) {
@@ -473,6 +479,15 @@ public final class App {
         if (!suffix.startsWith("/")) {
             suffix = "/" + suffix;
         }
+        if ("/cluster".equals(suffix) && acceptsHtml(exchange)) {
+            respond(exchange, 200, "text/html; charset=utf-8", MANAGEMENT_HTML);
+            return;
+        }
+        if (suffix.startsWith("/raw/")) {
+            suffix = suffix.substring("/raw".length());
+        } else if ("/raw".equals(suffix)) {
+            suffix = "/";
+        }
 
         String query = exchange.getRequestURI().getRawQuery();
         URI target = URI.create(managementBaseUrl + suffix
@@ -504,6 +519,16 @@ public final class App {
         } catch (Exception e) {
             return -1;
         }
+    }
+
+    private boolean acceptsHtml(HttpExchange exchange) {
+        /*
+         * Mantem compatibilidade do proxy: browsers recebem a tela de
+         * observabilidade, enquanto curl/fetch com JSON continuam recebendo o
+         * payload REST original do Coherence.
+         */
+        String accept = exchange.getRequestHeaders().getFirst("Accept");
+        return accept != null && accept.toLowerCase().contains("text/html");
     }
 
     private long idFromPath(HttpExchange exchange, String prefix) {
@@ -569,6 +594,983 @@ public final class App {
         String value = System.getenv(name);
         return value == null || value.isBlank() ? defaultValue : value;
     }
+
+    private static final String MANAGEMENT_HTML = """
+            <!doctype html>
+            <html lang="pt-BR">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>Oracle Coherence Observability</title>
+              <link rel="icon" href="data:,">
+              <style>
+                :root {
+                  color-scheme: light;
+                  --bg: #f4f6f8;
+                  --panel: #ffffff;
+                  --panel-soft: #f8fafc;
+                  --ink: #17202c;
+                  --muted: #647286;
+                  --line: #d7e0ea;
+                  --line-strong: #bdc9d6;
+                  --teal: #1f6f63;
+                  --blue: #255f99;
+                  --amber: #9a5b00;
+                  --red: #b42318;
+                  --green: #177245;
+                  --shadow: 0 12px 28px rgba(23, 32, 44, .08);
+                }
+
+                * { box-sizing: border-box; }
+
+                body {
+                  min-width: 1260px;
+                  margin: 0;
+                  background: var(--bg);
+                  color: var(--ink);
+                  font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                }
+
+                h1, h2, h3, p { margin: 0; }
+
+                a {
+                  color: inherit;
+                  text-decoration: none;
+                }
+
+                .topbar {
+                  position: sticky;
+                  top: 0;
+                  z-index: 3;
+                  display: grid;
+                  grid-template-columns: minmax(520px, 1fr) auto;
+                  gap: 18px;
+                  align-items: center;
+                  min-height: 76px;
+                  padding: 14px 26px;
+                  background: rgba(255, 255, 255, .96);
+                  border-bottom: 1px solid var(--line);
+                  backdrop-filter: blur(10px);
+                }
+
+                h1 {
+                  font-size: 22px;
+                  line-height: 1.1;
+                  font-weight: 800;
+                  letter-spacing: 0;
+                }
+
+                .subtitle {
+                  margin-top: 4px;
+                  color: var(--muted);
+                  font-size: 13px;
+                }
+
+                .actions {
+                  display: flex;
+                  align-items: center;
+                  justify-content: flex-end;
+                  gap: 8px;
+                }
+
+                .btn, button {
+                  display: inline-flex;
+                  align-items: center;
+                  justify-content: center;
+                  height: 34px;
+                  padding: 0 12px;
+                  border: 1px solid var(--line);
+                  border-radius: 6px;
+                  background: #ffffff;
+                  color: var(--ink);
+                  font: inherit;
+                  font-weight: 750;
+                  cursor: pointer;
+                }
+
+                .btn.primary, button.primary {
+                  background: var(--teal);
+                  border-color: var(--teal);
+                  color: #ffffff;
+                }
+
+                .badge {
+                  display: inline-flex;
+                  align-items: center;
+                  gap: 7px;
+                  min-height: 30px;
+                  padding: 4px 10px;
+                  border-radius: 999px;
+                  background: #eef2f6;
+                  color: var(--muted);
+                  font-size: 12px;
+                  font-weight: 800;
+                  white-space: nowrap;
+                }
+
+                .badge::before {
+                  content: "";
+                  width: 8px;
+                  height: 8px;
+                  border-radius: 999px;
+                  background: var(--muted);
+                }
+
+                .badge.good {
+                  background: #e9f7f0;
+                  color: var(--green);
+                }
+
+                .badge.good::before { background: var(--green); }
+
+                .badge.warn {
+                  background: #fff5df;
+                  color: var(--amber);
+                }
+
+                .badge.warn::before { background: var(--amber); }
+
+                .badge.bad {
+                  background: #fff0ee;
+                  color: var(--red);
+                }
+
+                .badge.bad::before { background: var(--red); }
+
+                main {
+                  max-width: 1680px;
+                  margin: 0 auto;
+                  padding: 18px 26px 34px;
+                }
+
+                .toolbar {
+                  display: flex;
+                  justify-content: space-between;
+                  align-items: center;
+                  margin-bottom: 14px;
+                  color: var(--muted);
+                  font-size: 13px;
+                }
+
+                .metric-grid {
+                  display: grid;
+                  grid-template-columns: repeat(6, minmax(0, 1fr));
+                  gap: 12px;
+                  margin-bottom: 14px;
+                }
+
+                .metric {
+                  min-height: 118px;
+                  padding: 14px;
+                  border: 1px solid var(--line);
+                  border-radius: 8px;
+                  background: var(--panel);
+                  box-shadow: var(--shadow);
+                }
+
+                .metric label {
+                  display: block;
+                  color: var(--muted);
+                  font-size: 11px;
+                  font-weight: 800;
+                  text-transform: uppercase;
+                }
+
+                .metric strong {
+                  display: block;
+                  margin-top: 10px;
+                  font-size: 28px;
+                  line-height: 1.05;
+                  font-weight: 850;
+                  overflow-wrap: anywhere;
+                }
+
+                .metric span {
+                  display: block;
+                  margin-top: 6px;
+                  color: var(--muted);
+                  font-size: 12px;
+                  overflow-wrap: anywhere;
+                }
+
+                .metric.good { border-top: 3px solid var(--green); }
+                .metric.warn { border-top: 3px solid var(--amber); }
+                .metric.bad { border-top: 3px solid var(--red); }
+                .metric.blue { border-top: 3px solid var(--blue); }
+                .metric.teal { border-top: 3px solid var(--teal); }
+
+                .content-grid {
+                  display: grid;
+                  grid-template-columns: 1.05fr .95fr;
+                  gap: 14px;
+                  align-items: start;
+                }
+
+                .panel {
+                  border: 1px solid var(--line);
+                  border-radius: 8px;
+                  background: var(--panel);
+                  box-shadow: var(--shadow);
+                  overflow: hidden;
+                }
+
+                .panel-head {
+                  display: flex;
+                  justify-content: space-between;
+                  align-items: center;
+                  gap: 12px;
+                  min-height: 58px;
+                  padding: 12px 14px;
+                  border-bottom: 1px solid var(--line);
+                  background: #ffffff;
+                }
+
+                .panel-head h2 {
+                  font-size: 15px;
+                  font-weight: 820;
+                }
+
+                .panel-head p {
+                  margin-top: 2px;
+                  color: var(--muted);
+                  font-size: 12px;
+                }
+
+                .panel-body {
+                  padding: 14px;
+                }
+
+                .wide {
+                  grid-column: 1 / -1;
+                }
+
+                .cache-strip {
+                  display: grid;
+                  grid-template-columns: repeat(4, minmax(0, 1fr));
+                  gap: 10px;
+                  margin-bottom: 12px;
+                }
+
+                .mini {
+                  min-height: 76px;
+                  padding: 11px;
+                  border: 1px solid var(--line);
+                  border-radius: 8px;
+                  background: var(--panel-soft);
+                }
+
+                .mini label {
+                  display: block;
+                  color: var(--muted);
+                  font-size: 11px;
+                  font-weight: 800;
+                  text-transform: uppercase;
+                }
+
+                .mini strong {
+                  display: block;
+                  margin-top: 5px;
+                  font-size: 22px;
+                  line-height: 1.1;
+                  font-weight: 850;
+                  overflow-wrap: anywhere;
+                }
+
+                .mini span {
+                  display: block;
+                  margin-top: 3px;
+                  color: var(--muted);
+                  font-size: 12px;
+                }
+
+                table {
+                  width: 100%;
+                  border-collapse: collapse;
+                  table-layout: fixed;
+                }
+
+                th {
+                  padding: 9px 10px;
+                  border-bottom: 1px solid var(--line);
+                  color: var(--muted);
+                  font-size: 11px;
+                  font-weight: 800;
+                  text-align: left;
+                  text-transform: uppercase;
+                  background: #f8fafc;
+                }
+
+                td {
+                  padding: 10px;
+                  border-bottom: 1px solid var(--line);
+                  vertical-align: top;
+                  overflow-wrap: break-word;
+                }
+
+                tr:last-child td { border-bottom: 0; }
+
+                td span {
+                  color: var(--muted);
+                  font-size: 12px;
+                }
+
+                .nowrap {
+                  white-space: nowrap;
+                  overflow: hidden;
+                  text-overflow: ellipsis;
+                }
+
+                .role {
+                  display: inline-flex;
+                  align-items: center;
+                  padding: 2px 8px;
+                  border-radius: 999px;
+                  background: #eef2f6;
+                  color: var(--muted);
+                  font-size: 12px;
+                  font-weight: 800;
+                }
+
+                .role.storage {
+                  background: #e9f7f0;
+                  color: var(--teal);
+                }
+
+                .role.client {
+                  background: #eef5ff;
+                  color: var(--blue);
+                }
+
+                .service-table .badge {
+                  min-height: 24px;
+                  padding: 2px 7px;
+                  font-size: 11px;
+                }
+
+                .bar {
+                  height: 8px;
+                  margin-top: 7px;
+                  border-radius: 999px;
+                  background: #e8edf3;
+                  overflow: hidden;
+                }
+
+                .bar > span {
+                  display: block;
+                  height: 100%;
+                  width: 0;
+                  border-radius: inherit;
+                  background: var(--teal);
+                }
+
+                .bar.warn > span { background: var(--amber); }
+                .bar.bad > span { background: var(--red); }
+
+                .raw-tabs {
+                  display: flex;
+                  flex-wrap: wrap;
+                  gap: 6px;
+                }
+
+                .raw-tabs button {
+                  height: 30px;
+                  padding: 0 9px;
+                  font-size: 12px;
+                }
+
+                .raw-tabs button.active {
+                  border-color: var(--blue);
+                  background: #eef5ff;
+                  color: var(--blue);
+                }
+
+                pre {
+                  min-height: 360px;
+                  max-height: 520px;
+                  margin: 0;
+                  padding: 12px;
+                  overflow: auto;
+                  border-radius: 8px;
+                  background: #111820;
+                  color: #e8edf5;
+                  font-size: 12px;
+                  line-height: 1.5;
+                  white-space: pre-wrap;
+                  word-break: break-word;
+                }
+
+                .empty {
+                  padding: 14px;
+                  border: 1px dashed var(--line-strong);
+                  border-radius: 8px;
+                  color: var(--muted);
+                  background: #fbfcfd;
+                }
+              </style>
+            </head>
+            <body>
+              <header class="topbar">
+                <div>
+                  <h1>Oracle Coherence Observability</h1>
+                  <p class="subtitle">Management REST consolidado via app-bastion, sem expor a porta 30000 do cluster.</p>
+                </div>
+                <div class="actions">
+                  <span class="badge" id="statusBadge">carregando</span>
+                  <button class="primary" id="refreshBtn">Atualizar</button>
+                  <button id="autoBtn">Auto-refresh on</button>
+                  <a class="btn" href="/console">Console POC</a>
+                  <a class="btn" href="/management-proxy/raw/cluster" target="_blank" rel="noreferrer">JSON bruto</a>
+                </div>
+              </header>
+
+              <main>
+                <div class="toolbar">
+                  <span id="overviewText">Coletando metricas do Coherence...</span>
+                  <span id="lastRefresh">-</span>
+                </div>
+
+                <section class="metric-grid" aria-label="Resumo do cluster">
+                  <div class="metric teal" id="clusterCard">
+                    <label>Cluster</label>
+                    <strong id="clusterName">-</strong>
+                    <span id="clusterMeta">-</span>
+                  </div>
+                  <div class="metric blue">
+                    <label>Membros</label>
+                    <strong id="clusterSize">-</strong>
+                    <span id="memberRoles">-</span>
+                  </div>
+                  <div class="metric" id="haCard">
+                    <label>HA status</label>
+                    <strong id="haStatus">-</strong>
+                    <span id="haMeta">servico ProductsDistributedCache</span>
+                  </div>
+                  <div class="metric">
+                    <label>Cache products</label>
+                    <strong id="cacheSize">-</strong>
+                    <span id="cacheMeta">entries / puts / clears</span>
+                  </div>
+                  <div class="metric">
+                    <label>Hit ratio</label>
+                    <strong id="hitRatio">-</strong>
+                    <span id="hitMeta">hits e misses do Coherence</span>
+                  </div>
+                  <div class="metric">
+                    <label>Heap JVM</label>
+                    <strong id="heapUsed">-</strong>
+                    <span id="heapMeta">usado / maximo</span>
+                  </div>
+                </section>
+
+                <section class="content-grid" aria-label="Detalhes de observabilidade">
+                  <article class="panel">
+                    <div class="panel-head">
+                      <div>
+                        <h2>Cache products</h2>
+                        <p>Metricas agregadas do NamedMap usado pela POC.</p>
+                      </div>
+                      <span class="badge" id="cacheBadge">-</span>
+                    </div>
+                    <div class="panel-body">
+                      <div class="cache-strip">
+                        <div class="mini">
+                          <label>Avg get</label>
+                          <strong id="avgGetMs">-</strong>
+                          <span>latencia media de leitura</span>
+                        </div>
+                        <div class="mini">
+                          <label>Avg miss</label>
+                          <strong id="avgMissMs">-</strong>
+                          <span>consulta fora do cache</span>
+                        </div>
+                        <div class="mini">
+                          <label>Avg put</label>
+                          <strong id="avgPutMs">-</strong>
+                          <span>escrita no cache</span>
+                        </div>
+                        <div class="mini">
+                          <label>Expiry</label>
+                          <strong id="cacheExpiry">-</strong>
+                          <span>TTL configurado</span>
+                        </div>
+                      </div>
+                      <table class="cache-table">
+                        <thead>
+                          <tr>
+                            <th style="width:150px">Cache</th>
+                            <th style="width:190px">Service</th>
+                            <th>Gets</th>
+                            <th>Hits</th>
+                            <th>Misses</th>
+                            <th>Evictions</th>
+                            <th>Listeners</th>
+                          </tr>
+                        </thead>
+                        <tbody id="cacheRows"></tbody>
+                      </table>
+                    </div>
+                  </article>
+
+                  <article class="panel">
+                    <div class="panel-head">
+                      <div>
+                        <h2>Sinais operacionais</h2>
+                        <p>Fila, entrega de pacotes, throughput e backlog.</p>
+                      </div>
+                      <span class="badge" id="opsBadge">-</span>
+                    </div>
+                    <div class="panel-body">
+                      <div class="cache-strip">
+                        <div class="mini">
+                          <label>Packet delivery</label>
+                          <strong id="deliveryRate">-</strong>
+                          <span>menor eficiencia entre membros</span>
+                        </div>
+                        <div class="mini">
+                          <label>Send queue</label>
+                          <strong id="sendQueue">-</strong>
+                          <span>pacotes aguardando envio</span>
+                        </div>
+                        <div class="mini">
+                          <label>Backlog</label>
+                          <strong id="taskBacklog">-</strong>
+                          <span>servicos com trabalho pendente</span>
+                        </div>
+                        <div class="mini">
+                          <label>Req avg</label>
+                          <strong id="serviceAvgMs">-</strong>
+                          <span>media dos servicos</span>
+                        </div>
+                      </div>
+                      <table class="service-table">
+                        <thead>
+                          <tr>
+                            <th style="width:175px">Servico</th>
+                            <th style="width:92px">Tipo</th>
+                            <th style="width:82px">Running</th>
+                            <th style="width:82px">Req avg</th>
+                            <th style="width:72px">Pending</th>
+                            <th style="width:72px">Backlog</th>
+                            <th style="width:112px">HA</th>
+                          </tr>
+                        </thead>
+                        <tbody id="serviceRows"></tbody>
+                      </table>
+                    </div>
+                  </article>
+
+                  <article class="panel wide">
+                    <div class="panel-head">
+                      <div>
+                        <h2>Membros do cluster</h2>
+                        <p>JVMs participantes, papel, heap e rede.</p>
+                      </div>
+                      <span id="memberCountBadge" class="badge">-</span>
+                    </div>
+                    <div class="panel-body">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th style="width:70px">ID</th>
+                            <th>Maquina</th>
+                            <th style="width:150px">Papel</th>
+                            <th>Endereco</th>
+                            <th>Heap</th>
+                            <th>Packets</th>
+                            <th>Queue</th>
+                            <th>Uptime desde</th>
+                          </tr>
+                        </thead>
+                        <tbody id="memberRows"></tbody>
+                      </table>
+                    </div>
+                  </article>
+
+                  <article class="panel wide">
+                    <div class="panel-head">
+                      <div>
+                        <h2>REST payload</h2>
+                        <p>Mesmos endpoints do Coherence Management usados pelo dashboard.</p>
+                      </div>
+                      <div class="raw-tabs">
+                        <button class="active" data-raw="/management-proxy/raw/cluster">cluster</button>
+                        <button data-raw="/management-proxy/raw/cluster/members">members</button>
+                        <button data-raw="/management-proxy/raw/cluster/services">services</button>
+                        <button data-raw="/management-proxy/raw/cluster/caches">caches</button>
+                      </div>
+                    </div>
+                    <div class="panel-body">
+                      <pre id="rawPayload">{}</pre>
+                    </div>
+                  </article>
+                </section>
+              </main>
+
+              <script>
+                const $ = (id) => document.getElementById(id);
+                const state = {
+                  autoRefresh: true,
+                  refreshTimer: null,
+                  rawEndpoint: '/management-proxy/raw/cluster'
+                };
+
+                async function getJson(url) {
+                  const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+                  const text = await response.text();
+                  let body;
+                  try {
+                    body = text ? JSON.parse(text) : {};
+                  } catch {
+                    body = { raw: text };
+                  }
+                  if (!response.ok) {
+                    throw new Error(body.error || `${response.status} ${response.statusText}`);
+                  }
+                  return body;
+                }
+
+                function first(value, fallback = '-') {
+                  if (Array.isArray(value)) {
+                    return value.length ? first(value[0], fallback) : fallback;
+                  }
+                  if (value === null || value === undefined || value === '') {
+                    return fallback;
+                  }
+                  return value;
+                }
+
+                function asItems(payload) {
+                  return Array.isArray(payload?.items) ? payload.items : [];
+                }
+
+                function metricAverage(value) {
+                  if (value === null || value === undefined) {
+                    return null;
+                  }
+                  if (typeof value === 'number') {
+                    return value;
+                  }
+                  if (Array.isArray(value)) {
+                    const numbers = value.map(metricAverage).filter((item) => item !== null);
+                    return numbers.length ? numbers.reduce((sum, item) => sum + item, 0) / numbers.length : null;
+                  }
+                  if (typeof value === 'object' && typeof value.average === 'number') {
+                    return value.average;
+                  }
+                  return null;
+                }
+
+                function numberValue(value, fallback = 0) {
+                  const raw = Array.isArray(value) ? value[0] : value;
+                  const parsed = Number(raw);
+                  return Number.isFinite(parsed) ? parsed : fallback;
+                }
+
+                function sumField(items, field) {
+                  return items.reduce((sum, item) => sum + numberValue(item[field], 0), 0);
+                }
+
+                function maxMetric(items, field) {
+                  const values = items.map((item) => metricAverage(item[field])).filter((item) => item !== null);
+                  return values.length ? Math.max(...values) : null;
+                }
+
+                function minMetric(items, field) {
+                  const values = items.map((item) => metricAverage(item[field])).filter((item) => item !== null);
+                  return values.length ? Math.min(...values) : null;
+                }
+
+                function fmtNumber(value) {
+                  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+                    return '-';
+                  }
+                  return Number(value).toLocaleString('pt-BR');
+                }
+
+                function fmtMs(value) {
+                  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+                    return '-';
+                  }
+                  return `${Number(value).toFixed(2)} ms`;
+                }
+
+                function fmtPct(value) {
+                  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+                    return '-';
+                  }
+                  return `${(Number(value) * 100).toFixed(1)}%`;
+                }
+
+                function fmtMb(value) {
+                  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+                    return '-';
+                  }
+                  return `${Number(value).toFixed(0)} MB`;
+                }
+
+                function fmtDurationMs(value) {
+                  const raw = Array.isArray(value) ? value[0] : value;
+                  const ms = Number(raw);
+                  if (!Number.isFinite(ms)) {
+                    return '-';
+                  }
+                  if (ms >= 60000) {
+                    return `${(ms / 60000).toFixed(0)} min`;
+                  }
+                  return `${(ms / 1000).toFixed(0)} s`;
+                }
+
+                function distributionText(value) {
+                  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                    return String(first(value));
+                  }
+                  return Object.entries(value)
+                    .map(([key, count]) => `${key}: ${count}`)
+                    .join(' | ');
+                }
+
+                function statusClassForHa(status) {
+                  if (!status || status === '-') {
+                    return 'warn';
+                  }
+                  const normalized = String(status).toUpperCase();
+                  if (normalized.includes('ENDANGERED') || normalized.includes('VULNERABLE')) {
+                    return 'warn';
+                  }
+                  if (normalized.includes('MACHINE-SAFE') || normalized.includes('NODE-SAFE') || normalized.includes('RACK-SAFE')) {
+                    return 'good';
+                  }
+                  return 'good';
+                }
+
+                function setBadge(id, text, kind) {
+                  const badge = $(id);
+                  badge.textContent = text;
+                  badge.className = `badge ${kind || ''}`.trim();
+                }
+
+                function setBar(widthPct, kind = '') {
+                  const safe = Math.max(0, Math.min(100, widthPct || 0));
+                  return `<div class="bar ${kind}"><span style="width:${safe}%"></span></div>`;
+                }
+
+                function escapeHtml(value) {
+                  return String(value ?? '-').replace(/[&<>"']/g, (char) => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#39;'
+                  }[char]));
+                }
+
+                function cleanName(value) {
+                  return String(value ?? '-').replaceAll('"', '');
+                }
+
+                function cacheDescription(cache) {
+                  const description = Array.isArray(cache.description) ? cache.description.join(' ') : String(cache.description || '');
+                  const parts = [];
+                  if (description.includes('LocalCache')) {
+                    parts.push('LocalCache');
+                  }
+                  if (description.includes('NearCache')) {
+                    parts.push('NearCache');
+                  }
+                  return parts.length ? parts.join(' + ') : first(cache.description);
+                }
+
+                function serviceType(value) {
+                  const raw = Array.isArray(value) ? value.join(', ') : String(value || '-');
+                  return raw.replaceAll('DistributedCache', 'DistCache');
+                }
+
+                function renderCache(cache) {
+                  if (!cache) {
+                    $('cacheRows').innerHTML = '<tr><td colspan="7"><div class="empty">Nenhum cache retornado pelo Management REST.</div></td></tr>';
+                    return;
+                  }
+                  const hitProbability = metricAverage(cache.hitProbability);
+                  const avgGet = metricAverage(cache.averageGetMillis);
+                  const avgMiss = metricAverage(cache.averageMissMillis);
+                  const avgPut = metricAverage(cache.averagePutMillis);
+                  $('cacheSize').textContent = fmtNumber(first(cache.size, first(cache.units, 0)));
+                  $('cacheMeta').textContent = `${fmtNumber(cache.totalPuts)} puts | ${fmtNumber(cache.clearCount)} clears`;
+                  $('hitRatio').textContent = fmtPct(hitProbability);
+                  $('hitMeta').textContent = `${fmtNumber(cache.cacheHits)} hits | ${fmtNumber(cache.cacheMisses)} misses`;
+                  $('avgGetMs').textContent = fmtMs(avgGet);
+                  $('avgMissMs').textContent = fmtMs(avgMiss);
+                  $('avgPutMs').textContent = fmtMs(avgPut);
+                  $('cacheExpiry').textContent = fmtDurationMs(cache.expiryDelay);
+                  setBadge('cacheBadge', `${fmtNumber(first(cache.size, first(cache.units, 0)))} entries`, hitProbability >= .9 ? 'good' : 'warn');
+                  $('cacheRows').innerHTML = `
+                    <tr>
+                      <td><strong>${escapeHtml(cache.name)}</strong><br><span>${escapeHtml(cacheDescription(cache))}</span></td>
+                      <td class="nowrap" title="${escapeHtml(cache.service)}">${escapeHtml(cache.service)}</td>
+                      <td>${fmtNumber(cache.totalGets)}</td>
+                      <td>${fmtNumber(cache.cacheHits)}</td>
+                      <td>${fmtNumber(cache.cacheMisses)}</td>
+                      <td>${fmtNumber(cache.evictionCount)}</td>
+                      <td>${fmtNumber(cache.listenerRegistrations)}</td>
+                    </tr>
+                  `;
+                }
+
+                function renderMembers(members) {
+                  const storage = members.filter((member) => String(member.roleName).includes('storage')).length;
+                  const clients = members.length - storage;
+                  $('memberRoles').textContent = `${storage} storage | ${clients} client`;
+                  setBadge('memberCountBadge', `${members.length} membros`, members.length >= 2 ? 'good' : 'warn');
+                  if (!members.length) {
+                    $('memberRows').innerHTML = '<tr><td colspan="8"><div class="empty">Nenhum membro retornado pelo cluster.</div></td></tr>';
+                    return;
+                  }
+                  $('memberRows').innerHTML = members
+                    .sort((a, b) => numberValue(a.id) - numberValue(b.id))
+                    .map((member) => {
+                      const max = numberValue(member.memoryMaxMB);
+                      const available = numberValue(member.memoryAvailableMB);
+                      const used = Math.max(0, max - available);
+                      const usedPct = max > 0 ? (used / max) * 100 : 0;
+                      const barKind = usedPct > 85 ? 'bad' : usedPct > 70 ? 'warn' : '';
+                      const role = String(member.roleName || '').includes('storage') ? 'storage' : 'client';
+                      const delivery = metricAverage(member.packetDeliveryEfficiency);
+                      const queue = numberValue(member.sendQueueSize);
+                      const address = String(first(member.unicastAddress)).replace('/', '');
+                      return `
+                        <tr>
+                          <td><strong>${fmtNumber(member.id)}</strong></td>
+                          <td><strong>${escapeHtml(member.machineName)}</strong><br><span>pid ${escapeHtml(member.processName)} | cpu ${fmtNumber(member.cpuCount)}</span></td>
+                          <td><span class="role ${role}">${escapeHtml(member.roleName)}</span></td>
+                          <td>${escapeHtml(address)}:${escapeHtml(member.unicastPort)}</td>
+                          <td>${fmtMb(used)} / ${fmtMb(max)}${setBar(usedPct, barKind)}</td>
+                          <td>${fmtPct(delivery)}<br><span>${fmtNumber(member.packetsSent)} sent | ${fmtNumber(member.packetsReceived)} recv</span></td>
+                          <td>${fmtNumber(queue)}</td>
+                          <td>${escapeHtml(first(member.timestamp))}</td>
+                        </tr>
+                      `;
+                    })
+                    .join('');
+                }
+
+                function renderServices(services) {
+                  const productService = services.find((service) => String(service.name).includes('ProductsDistributedCache'));
+                  const haStatus = first(productService?.statusHA, '-');
+                  const haClass = statusClassForHa(haStatus);
+                  $('haStatus').textContent = haStatus;
+                  $('haMeta').textContent = productService ? `${fmtNumber(productService.requestTotalCount)} requests | ${fmtNumber(productService.taskCount)} tasks` : 'servico nao encontrado';
+                  $('haCard').className = `metric ${haClass}`;
+                  const totalBacklog = sumField(services, 'taskBacklog') + sumField(services, 'requestPendingCount');
+                  const maxAvg = maxMetric(services, 'requestAverageDuration');
+                  $('taskBacklog').textContent = fmtNumber(totalBacklog);
+                  $('serviceAvgMs').textContent = fmtMs(maxAvg);
+                  setBadge('opsBadge', totalBacklog === 0 ? 'sem backlog' : `${totalBacklog} pendencias`, totalBacklog === 0 ? 'good' : 'warn');
+                  if (!services.length) {
+                    $('serviceRows').innerHTML = '<tr><td colspan="7"><div class="empty">Nenhum servico retornado pelo Management REST.</div></td></tr>';
+                    return;
+                  }
+                  $('serviceRows').innerHTML = services
+                    .map((service) => {
+                      const avg = metricAverage(service.requestAverageDuration);
+                      const pending = numberValue(service.requestPendingCount);
+                      const backlog = numberValue(service.taskBacklog);
+                      const status = first(service.statusHA, '-');
+                      const kind = statusClassForHa(status);
+                      return `
+                        <tr>
+                          <td class="nowrap" title="${escapeHtml(cleanName(service.name))}"><strong>${escapeHtml(cleanName(service.name))}</strong></td>
+                          <td>${escapeHtml(serviceType(service.type))}</td>
+                          <td>${escapeHtml(distributionText(service.running))}</td>
+                          <td>${fmtMs(avg)}</td>
+                          <td>${fmtNumber(pending)}</td>
+                          <td>${fmtNumber(backlog)}</td>
+                          <td><span class="badge ${kind}">${escapeHtml(status)}</span></td>
+                        </tr>
+                      `;
+                    })
+                    .join('');
+                }
+
+                function renderSummary(cluster, members, services, caches, elapsedMs) {
+                  const cache = caches.find((item) => item.name === 'products') || caches[0];
+                  const running = Boolean(cluster.running);
+                  const maxHeap = sumField(members, 'memoryMaxMB');
+                  const availableHeap = sumField(members, 'memoryAvailableMB');
+                  const usedHeap = Math.max(0, maxHeap - availableHeap);
+                  const heapPct = maxHeap > 0 ? usedHeap / maxHeap : null;
+                  const delivery = minMetric(members, 'packetDeliveryEfficiency');
+                  const sendQueue = sumField(members, 'sendQueueSize');
+
+                  $('clusterName').textContent = cluster.clusterName || '-';
+                  $('clusterMeta').textContent = `${cluster.version || '-'} | ${cluster.licenseMode || '-'}`;
+                  $('clusterSize').textContent = fmtNumber(cluster.clusterSize);
+                  $('heapUsed').textContent = fmtMb(usedHeap);
+                  $('heapMeta').textContent = `${fmtPct(heapPct)} usado de ${fmtMb(maxHeap)}`;
+                  $('deliveryRate').textContent = fmtPct(delivery);
+                  $('sendQueue').textContent = fmtNumber(sendQueue);
+                  $('overviewText').textContent = `Cluster ${cluster.clusterName || '-'} | ${services.length} servicos | ${caches.length} caches | refresh em ${fmtMs(elapsedMs)}`;
+                  setBadge('statusBadge', running ? 'cluster running' : 'cluster stopped', running ? 'good' : 'bad');
+                  $('clusterCard').className = `metric ${running ? 'teal' : 'bad'}`;
+                  renderCache(cache);
+                  renderMembers(members);
+                  renderServices(services);
+                }
+
+                async function loadRaw(endpoint = state.rawEndpoint) {
+                  state.rawEndpoint = endpoint;
+                  const payload = await getJson(endpoint);
+                  $('rawPayload').textContent = JSON.stringify(payload, null, 2);
+                  document.querySelectorAll('[data-raw]').forEach((button) => {
+                    button.classList.toggle('active', button.dataset.raw === endpoint);
+                  });
+                }
+
+                async function refresh() {
+                  const started = performance.now();
+                  setBadge('statusBadge', 'atualizando', 'warn');
+                  try {
+                    const [cluster, membersPayload, servicesPayload, cachesPayload] = await Promise.all([
+                      getJson('/management-proxy/raw/cluster'),
+                      getJson('/management-proxy/raw/cluster/members'),
+                      getJson('/management-proxy/raw/cluster/services'),
+                      getJson('/management-proxy/raw/cluster/caches')
+                    ]);
+                    const elapsed = performance.now() - started;
+                    renderSummary(cluster, asItems(membersPayload), asItems(servicesPayload), asItems(cachesPayload), elapsed);
+                    $('lastRefresh').textContent = `Atualizado ${new Date().toLocaleTimeString()}`;
+                    await loadRaw(state.rawEndpoint);
+                  } catch (error) {
+                    setBadge('statusBadge', 'erro', 'bad');
+                    $('overviewText').textContent = error.message;
+                    $('rawPayload').textContent = JSON.stringify({ error: error.message }, null, 2);
+                  }
+                }
+
+                function configureAutoRefresh() {
+                  clearInterval(state.refreshTimer);
+                  $('autoBtn').textContent = state.autoRefresh ? 'Auto-refresh on' : 'Auto-refresh off';
+                  if (state.autoRefresh) {
+                    state.refreshTimer = setInterval(refresh, 5000);
+                  }
+                }
+
+                $('refreshBtn').addEventListener('click', refresh);
+                $('autoBtn').addEventListener('click', () => {
+                  state.autoRefresh = !state.autoRefresh;
+                  configureAutoRefresh();
+                });
+                document.querySelectorAll('[data-raw]').forEach((button) => {
+                  button.addEventListener('click', () => loadRaw(button.dataset.raw).catch((error) => {
+                    $('rawPayload').textContent = JSON.stringify({ error: error.message }, null, 2);
+                  }));
+                });
+
+                configureAutoRefresh();
+                refresh();
+              </script>
+            </body>
+            </html>
+            """;
 
     private static final String CONSOLE_HTML = """
             <!doctype html>
@@ -986,7 +1988,7 @@ public final class App {
                   <span class="pill" id="activeBackendPill">Ativo: -</span>
                   <button class="primary" id="toggleBackendBtn">Intercambiar cache</button>
                   <button class="ghost" id="refreshBtn">Atualizar</button>
-                  <button class="ghost" id="openMgmtBtn">Coherence REST</button>
+                  <button class="ghost" id="openMgmtBtn">Coherence Observability</button>
                 </div>
               </header>
 
