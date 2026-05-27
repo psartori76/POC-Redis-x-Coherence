@@ -62,6 +62,19 @@ Todos os recursos criados recebem defined tags no namespace `0-ResourceControl`:
 
 ## Recriacao Rapida
 
+O runbook completo esta em `docs/poc-recreate-runbook.md`. Para executar a
+sequencia assistida, usando os arquivos locais de `.ssh`, `.secrets` e
+`infra/terraform/poc.auto.tfvars`:
+
+```bash
+./scripts/recreate-poc.sh
+```
+
+Por padrao, o script provisiona infra, configura Oracle, cria a massa de
+produtos, faz build/deploy, valida `/health` e abre o tunnel SSH no final. Use
+`OPEN_TUNNEL=false` se quiser apenas preparar o ambiente sem prender o terminal
+no tunnel.
+
 Provisionar a infraestrutura:
 
 ```bash
@@ -96,6 +109,7 @@ Depois acesse:
 
 ```text
 http://localhost:8081/console
+http://localhost:8081/management-proxy/cluster
 http://localhost:30000/management/coherence/cluster
 ```
 
