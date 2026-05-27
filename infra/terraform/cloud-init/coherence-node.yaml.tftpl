@@ -1,0 +1,44 @@
+#cloud-config
+package_update: true
+packages:
+  - java-17-openjdk
+  - jq
+  - unzip
+  - wget
+  - curl
+runcmd:
+  - mkdir -p /opt/poc/coherence
+  - |
+    if systemctl is-active --quiet firewalld; then
+      timeout 20s firewall-cmd --permanent --add-port=7/tcp || true
+      timeout 20s firewall-cmd --permanent --add-port=8080/tcp || true
+      timeout 20s firewall-cmd --permanent --add-port=30000/tcp || true
+      timeout 20s firewall-cmd --permanent --add-port=7575/tcp || true
+      timeout 20s firewall-cmd --permanent --add-port=7575/udp || true
+      timeout 20s firewall-cmd --reload || true
+    fi
+  - |
+    cat >/etc/systemd/system/poc-tcp7.socket <<'SOCKET'
+    [Unit]
+    Description=TCP echo compatibility socket for Coherence IpMonitor
+
+    [Socket]
+    ListenStream=7
+    Accept=yes
+
+    [Install]
+    WantedBy=sockets.target
+    SOCKET
+  - |
+    cat >/etc/systemd/system/poc-tcp7@.service <<'SERVICE'
+    [Unit]
+    Description=TCP echo compatibility service for Coherence IpMonitor
+
+    [Service]
+    StandardInput=socket
+    StandardOutput=socket
+    ExecStart=/usr/bin/cat
+    SERVICE
+  - systemctl daemon-reload
+  - systemctl enable --now poc-tcp7.socket
+  - echo "Coherence node ${node_index} ready for application deployment" > /etc/motd

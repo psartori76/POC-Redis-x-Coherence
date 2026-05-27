@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<coherence xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns="http://xmlns.oracle.com/coherence/coherence-operational-config"
+              xsi:schemaLocation="http://xmlns.oracle.com/coherence/coherence-operational-config coherence-operational-config.xsd">
+  <cluster-config>
+    <member-identity>
+      <!-- Nome do cluster compartilhado pela app e pelo no Coherence. -->
+      <cluster-name system-property="coherence.cluster">poc-coherence</cluster-name>
+      <!-- Papel logico do membro, exibido nos logs e no management. -->
+      <role-name system-property="coherence.role">cache-api</role-name>
+    </member-identity>
+    <unicast-listener>
+      <well-known-addresses>
+        <!--
+          WKA = Well Known Address. Em OCI apontamos para o IP privado da VM
+          Coherence para que o app-bastion encontre o cluster.
+        -->
+        <address id="1" system-property="coherence.wka">127.0.0.1</address>
+      </well-known-addresses>
+      <!-- IP local usado pelo membro para anunciar sua presenca no cluster. -->
+      <address system-property="coherence.localhost"></address>
+      <!-- Porta de comunicacao entre membros Coherence. -->
+      <port system-property="coherence.localport">7575</port>
+      <!-- Mantem a porta fixa para simplificar security lists/NSGs da POC. -->
+      <port-auto-adjust system-property="coherence.localport.adjust">false</port-auto-adjust>
+    </unicast-listener>
+  </cluster-config>
+</coherence>

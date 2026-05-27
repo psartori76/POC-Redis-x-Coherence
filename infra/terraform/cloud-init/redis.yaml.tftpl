@@ -1,0 +1,25 @@
+#cloud-config
+package_update: true
+packages:
+  - jq
+  - unzip
+  - wget
+  - curl
+runcmd:
+  - |
+    dnf -y module enable redis:6 || true
+    dnf -y install redis
+  - |
+    if grep -q '^bind ' /etc/redis.conf; then
+      sed -i 's/^bind .*/bind 0.0.0.0/' /etc/redis.conf
+    else
+      echo 'bind 0.0.0.0' >> /etc/redis.conf
+    fi
+    sed -i 's/^protected-mode .*/protected-mode no/' /etc/redis.conf
+  - |
+    if systemctl is-active --quiet firewalld; then
+      timeout 20s firewall-cmd --permanent --add-port=6379/tcp || true
+      timeout 20s firewall-cmd --reload || true
+    fi
+  - systemctl enable --now redis
+  - echo "Redis ready for POC Coherence/Redis demo" > /etc/motd

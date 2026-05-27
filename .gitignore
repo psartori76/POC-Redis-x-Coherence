@@ -1,0 +1,25 @@
+# Local credentials and generated access material
+.ssh/
+.secrets/
+*.pem
+
+# Terraform local state and provider cache
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Local overrides
+*.auto.tfvars
+*.auto.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# macOS
+.DS_Store
+
+# Build artifacts
+app/target/

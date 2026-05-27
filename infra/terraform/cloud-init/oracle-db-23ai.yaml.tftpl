@@ -1,0 +1,42 @@
+#cloud-config
+package_update: true
+packages:
+  - jq
+  - unzip
+  - wget
+  - curl
+runcmd:
+  - mkdir -p /opt/poc
+  - |
+    if systemctl is-active --quiet firewalld; then
+      timeout 20s firewall-cmd --permanent --add-port=1521/tcp || true
+      timeout 20s firewall-cmd --reload || true
+    fi
+  - |
+    cat >/opt/poc/install-oracle-db-free-23ai.sh <<'SCRIPT'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [[ $# -ne 1 ]]; then
+      echo "Usage: sudo /opt/poc/install-oracle-db-free-23ai.sh '<admin-password>'" >&2
+      exit 2
+    fi
+
+    ADMIN_PASSWORD="$1"
+    LOG_DIR=/opt/poc/logs
+    mkdir -p "$LOG_DIR"
+
+    dnf -y install oracle-database-preinstall-23ai | tee "$LOG_DIR/preinstall.log"
+    curl -JLo /opt/poc/oracle-database-free-23ai.rpm \
+      https://download.oracle.com/otn-pub/otn_software/db-free/oracle-database-free-23ai-1.0-1.el8.x86_64.rpm
+    dnf -y localinstall /opt/poc/oracle-database-free-23ai.rpm | tee "$LOG_DIR/software-install.log"
+    printf '%s\n%s\n' "$ADMIN_PASSWORD" "$ADMIN_PASSWORD" | /etc/init.d/oracle-free-23ai configure | tee "$LOG_DIR/configure.log"
+    cat >/etc/profile.d/oracle-free-23ai.sh <<'PROFILE'
+    export ORACLE_HOME=/opt/oracle/product/23ai/dbhomeFree
+    export ORACLE_SID=FREE
+    export PATH=$ORACLE_HOME/bin:$PATH
+    PROFILE
+    systemctl enable oracle-free-23ai || true
+    SCRIPT
+  - chmod 700 /opt/poc/install-oracle-db-free-23ai.sh
+  - echo "Oracle Database 23ai Free install helper staged at /opt/poc/install-oracle-db-free-23ai.sh" > /etc/motd

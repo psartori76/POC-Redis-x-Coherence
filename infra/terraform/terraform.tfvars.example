@@ -1,0 +1,18 @@
+tenancy_ocid            = "ocid1.tenancy.oc1..example"
+parent_compartment_ocid = "ocid1.compartment.oc1..parent"
+poc_compartment_ocid    = "ocid1.compartment.oc1..poc"
+vcn_ocid                = "ocid1.vcn.oc1.iad.example"
+public_subnet_ocid      = "ocid1.subnet.oc1.iad.public"
+private_subnet_ocid     = "ocid1.subnet.oc1.iad.private"
+ssh_public_key_path     = "../../.ssh/poc_coherence_ed25519.pub"
+allowed_ssh_cidr        = "0.0.0.0/0"
+
+resource_control_tags = {
+  CreatedBy        = "replace-with-created-by-value"
+  KeepResource     = "POC Redis x Coherence"
+  CreatedAt        = "2026-01-01T00:00:00Z"
+  ShutdownTime     = "POC Redis x Coherence"
+  Team             = "replace-with-team-value"
+  DeleteResource   = "replace-with-delete-policy"
+  ShutdownResource = "replace-with-shutdown-policy"
+}
