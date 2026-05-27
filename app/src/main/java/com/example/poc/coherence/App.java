@@ -1987,7 +1987,6 @@ public final class App {
                 <div class="top-actions">
                   <span class="pill" id="activeBackendPill">Ativo: -</span>
                   <button class="primary" id="toggleBackendBtn">Intercambiar cache</button>
-                  <button class="ghost" id="refreshBtn">Atualizar</button>
                   <button class="ghost" id="openMgmtBtn">Coherence Observability</button>
                 </div>
               </header>
@@ -2537,17 +2536,11 @@ public final class App {
                 $('coherenceClearCacheBtn').addEventListener('click', () => clearBackendCache('coherence').catch((e) => setStatus('bad', e.message)));
                 $('coherenceResetStatsBtn').addEventListener('click', () => resetBackendStats('coherence').catch((e) => setStatus('bad', e.message)));
                 $('toggleBackendBtn').addEventListener('click', () => toggleBackend().catch((e) => setStatus('bad', e.message)));
-                $('refreshBtn').addEventListener('click', () => refresh().catch((e) => setStatus('bad', e.message)));
                 $('openMgmtBtn').addEventListener('click', () => window.open('/management-proxy/cluster', '_blank'));
 
                 setRobotMode('sequential');
                 renderRobotTimings();
                 refresh();
-                setInterval(() => {
-                  if (!state.robotTimer) {
-                    refresh();
-                  }
-                }, 5000);
               </script>
             </body>
             </html>
