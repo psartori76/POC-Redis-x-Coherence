@@ -1036,9 +1036,14 @@ public final class App {
                           <span id="robotLastBackend">backend -</span>
                         </div>
                         <div class="stat">
-                          <label>Ultimo tempo</label>
-                          <strong id="robotLastMs">-</strong>
-                          <span>tempo percebido pelo browser</span>
+                          <label>Tempo Redis</label>
+                          <strong id="robotRedisLastMs">-</strong>
+                          <span id="robotRedisAvgMs">media browser -</span>
+                        </div>
+                        <div class="stat">
+                          <label>Tempo Coherence</label>
+                          <strong id="robotCoherenceLastMs">-</strong>
+                          <span id="robotCoherenceAvgMs">media browser -</span>
                         </div>
                         <div class="stat">
                           <label>Resultado</label>
@@ -1121,6 +1126,10 @@ public final class App {
                   robotNextId: 1,
                   robotMode: 'sequential',
                   robotRequests: 0,
+                  robotTimings: {
+                    redis: { count: 0, totalMs: 0, lastMs: null },
+                    coherence: { count: 0, totalMs: 0, lastMs: null }
+                  },
                   payloads: {
                     redis: null,
                     coherence: null
@@ -1301,6 +1310,40 @@ public final class App {
                   $('robotRate').textContent = `${state.robotMode === 'random' ? 'aleatorio' : 'sequencial'} | ${robotIntervalMs()} ms`;
                 }
 
+                function renderRobotTiming(backend) {
+                  const timing = state.robotTimings[backend];
+                  const label = backend === 'redis' ? 'Redis' : 'Coherence';
+                  const prefix = backend === 'redis' ? 'robotRedis' : 'robotCoherence';
+                  $(`${prefix}LastMs`).textContent = timing.lastMs == null ? '-' : fmtMs(timing.lastMs);
+                  const avg = timing.count === 0 ? '-' : fmtMs(timing.totalMs / timing.count);
+                  $(`${prefix}AvgMs`).textContent = `media browser ${avg} | ${timing.count} req`;
+                  $(`${prefix}LastMs`).title = `${label}: ultimo tempo percebido pelo browser`;
+                }
+
+                function renderRobotTimings() {
+                  renderRobotTiming('redis');
+                  renderRobotTiming('coherence');
+                }
+
+                function recordRobotTiming(backend, elapsedMs) {
+                  if (!state.robotTimings[backend]) {
+                    return;
+                  }
+                  const timing = state.robotTimings[backend];
+                  timing.count += 1;
+                  timing.totalMs += elapsedMs;
+                  timing.lastMs = elapsedMs;
+                  renderRobotTiming(backend);
+                }
+
+                function resetRobotTiming(backend) {
+                  if (!state.robotTimings[backend]) {
+                    return;
+                  }
+                  state.robotTimings[backend] = { count: 0, totalMs: 0, lastMs: null };
+                  renderRobotTiming(backend);
+                }
+
                 function setRobotMode(mode) {
                   state.robotMode = mode;
                   $('sequentialModeBtn').classList.toggle('active', mode === 'sequential');
@@ -1348,6 +1391,7 @@ public final class App {
                     const at = new Date().toLocaleTimeString();
                     const hit = body.cacheHit ? 'cache hit' : 'cache miss';
                     state.robotRequests += 1;
+                    recordRobotTiming(backend, result.elapsedMs);
                     state.payloads[backend] = {
                       id,
                       at,
@@ -1361,7 +1405,6 @@ public final class App {
                     $('robotRequests').textContent = state.robotRequests;
                     $('robotLastId').textContent = id;
                     $('robotLastBackend').textContent = `backend ${backend}`;
-                    $('robotLastMs').textContent = fmtMs(result.elapsedMs);
                     $('robotLastHit').textContent = hit;
                     $('robotLastName').textContent = body.name || '-';
                     appendRobotLog({
@@ -1421,6 +1464,7 @@ public final class App {
                 async function resetBackendStats(backend) {
                   await getJson(`/metrics/reset/${backend}`, { method: 'POST' });
                   state.payloads[backend] = null;
+                  resetRobotTiming(backend);
                   await refresh();
                 }
 
@@ -1470,6 +1514,7 @@ public final class App {
                         browserResponseMs: elapsed
                       }
                     };
+                    resetRobotTiming(backend);
                     setBackendBusy(backend, false, `${label}: ${result.warmed} registros (${fmtPct(result.percent)}) em cache; stats zeradas`);
                     await refresh();
                   } catch (error) {
@@ -1494,6 +1539,7 @@ public final class App {
                 $('openMgmtBtn').addEventListener('click', () => window.open('/management-proxy/cluster', '_blank'));
 
                 setRobotMode('sequential');
+                renderRobotTimings();
                 refresh();
                 setInterval(() => {
                   if (!state.robotTimer) {
