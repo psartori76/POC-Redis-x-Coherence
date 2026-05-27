@@ -175,6 +175,37 @@ medias de hit e miss, taxa de hit/miss, percentual de leituras que foram ao
 Oracle, quantidade estimada de acessos ao banco evitados pelo cache e o score
 composto da demo.
 
+## Tuning de Performance
+
+O ambiente foi ajustado para uma comparacao mais justa entre Redis e Coherence:
+
+- app/bastion, Redis e Coherence usam 2 OCPUs por padrao;
+- Redis roda como cache puro para a POC: `appendonly no`, `save ""`,
+  `maxmemory 6gb`, `maxmemory-policy allkeys-lru`, `io-threads 2` e
+  `tcp-keepalive 60`;
+- o deploy aplica sysctl basico e desabilita Transparent Huge Pages nas VMs de
+  cache/app;
+- o Redis fica acessivel pela porta privada `6379/tcp`;
+- o Coherence usa `7574` para discovery/NameService, `7575` para TCMP e
+  `30000` para management REST;
+- o Coherence usa POF para `Product`, com `pof-config.xml` e
+  `ProductPofSerializer`;
+- o cache `products` usa near-cache local na app, mantendo o back cache
+  distribuido no storage node;
+- o TTL da demo foi aumentado para 60 minutos, evitando expiracao durante
+  apresentacoes e benchmarks manuais;
+- o warm-up usa operacoes em lote: Redis via pipeline e Coherence via `putAll`.
+
+Depois de deployar, um teste limpo pode ser preparado com:
+
+```bash
+curl -X POST "http://127.0.0.1:8080/cache/warm/redis?start=1&percent=100&total=50000&clear=true&resetStats=true"
+curl -X POST "http://127.0.0.1:8080/cache/warm/coherence?start=1&percent=100&total=50000&clear=true&resetStats=true"
+```
+
+Como a porta publica da app pode estar bloqueada por rede/NSG, esses comandos
+podem ser executados dentro do app-bastion ou via tunnel local.
+
 ## Preflight
 
 Validacao read-only da tenancy e rede:

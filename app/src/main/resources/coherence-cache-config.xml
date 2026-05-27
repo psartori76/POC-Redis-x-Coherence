@@ -4,28 +4,53 @@
               xsi:schemaLocation="http://xmlns.oracle.com/coherence/coherence-cache-config coherence-cache-config.xsd">
   <caching-scheme-mapping>
     <!--
-      O NamedMap "products" usado no Java e ligado ao esquema distributed-cache.
-      Quando a app chama session.getMap("products"), ela recebe esse cache.
+      O NamedMap "products" usado no Java e ligado ao near-cache. A app ve um
+      mapa so, mas leituras repetidas podem ser atendidas pelo front cache local
+      antes de atravessar a rede ate o storage node.
     -->
     <cache-mapping>
       <cache-name>products</cache-name>
-      <scheme-name>distributed-cache</scheme-name>
+      <scheme-name>near-products-cache</scheme-name>
     </cache-mapping>
   </caching-scheme-mapping>
 
   <caching-schemes>
+    <!--
+      Near-cache no membro da app. O front cache fica local na JVM da aplicacao;
+      o back cache continua sendo o cache distribuido no storage node Coherence.
+    -->
+    <near-scheme>
+      <scheme-name>near-products-cache</scheme-name>
+      <front-scheme>
+        <local-scheme>
+          <high-units system-property="poc.near.high.units">50000</high-units>
+          <expiry-delay system-property="poc.near.expiry">60m</expiry-delay>
+        </local-scheme>
+      </front-scheme>
+      <back-scheme>
+        <distributed-scheme>
+          <scheme-ref>distributed-products-cache</scheme-ref>
+        </distributed-scheme>
+      </back-scheme>
+      <invalidation-strategy>present</invalidation-strategy>
+      <autostart>true</autostart>
+    </near-scheme>
+
     <!--
       Cache distribuido do Coherence para a POC. O no app-bastion participa do
       cluster com localstorage=false, entao acessa o mapa sem guardar particoes.
       A VM Coherence atua como storage node e guarda os dados.
     -->
     <distributed-scheme>
-      <scheme-name>distributed-cache</scheme-name>
+      <scheme-name>distributed-products-cache</scheme-name>
       <service-name>ProductsDistributedCache</service-name>
+      <serializer>pof</serializer>
+      <partition-count system-property="poc.coherence.partition.count">257</partition-count>
+      <backup-count system-property="poc.coherence.backup.count">0</backup-count>
       <backing-map-scheme>
         <local-scheme>
-          <!-- Expiracao alinhada ao TTL do Redis para facilitar a comparacao. -->
-          <expiry-delay>5m</expiry-delay>
+          <!-- TTL maior evita que um teste humano perca dados no meio da demo. -->
+          <expiry-delay system-property="poc.coherence.expiry">60m</expiry-delay>
         </local-scheme>
       </backing-map-scheme>
       <autostart>true</autostart>

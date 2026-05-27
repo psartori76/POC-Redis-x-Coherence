@@ -9,6 +9,8 @@
 *.tfstate.*
 crash.log
 crash.*.log
+tfplan
+*.tfplan
 
 # Local overrides
 *.auto.tfvars

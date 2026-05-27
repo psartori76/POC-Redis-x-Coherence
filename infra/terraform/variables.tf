@@ -97,7 +97,7 @@ variable "resource_control_tags" {
 
 variable "app_bastion_ocpus" {
   type    = number
-  default = 1
+  default = 2
 }
 
 variable "app_bastion_memory_gbs" {
@@ -122,7 +122,7 @@ variable "coherence_node_count" {
 
 variable "coherence_ocpus" {
   type    = number
-  default = 1
+  default = 2
 }
 
 variable "coherence_memory_gbs" {
@@ -132,7 +132,7 @@ variable "coherence_memory_gbs" {
 
 variable "redis_ocpus" {
   type    = number
-  default = 1
+  default = 2
 }
 
 variable "redis_memory_gbs" {

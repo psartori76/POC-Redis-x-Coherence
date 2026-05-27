@@ -7,9 +7,10 @@ import java.time.Instant;
 /**
  * Modelo de dominio usado pela POC.
  *
- * Ele precisa ser Serializable porque o Coherence pode transportar/armazenar o
- * objeto entre membros do cluster. O Redis, por outro lado, usa a representacao
- * JSON criada em Json.toCacheJson.
+ * O Redis usa a representacao JSON criada em Json.toCacheJson. O Coherence usa
+ * POF, configurado em pof-config.xml, para evitar a serializacao Java padrao no
+ * caminho quente da demo. Serializable fica como fallback seguro para execucoes
+ * locais ou configuracoes antigas.
  */
 public record Product(long id, String name, BigDecimal price, Instant updatedAt) implements Serializable {
     @java.io.Serial

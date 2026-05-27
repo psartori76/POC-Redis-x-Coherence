@@ -7,6 +7,13 @@ private_subnet_ocid     = "ocid1.subnet.oc1.iad.private"
 ssh_public_key_path     = "../../.ssh/poc_coherence_ed25519.pub"
 allowed_ssh_cidr        = "0.0.0.0/0"
 
+# Defaults de performance da POC. Redis e Coherence ficam com CPU equivalente;
+# a app/bastion tambem recebe 2 OCPUs para nao virar o gargalo do robo.
+app_bastion_ocpus   = 2
+coherence_ocpus     = 2
+redis_ocpus         = 2
+coherence_node_count = 1
+
 resource_control_tags = {
   CreatedBy        = "replace-with-created-by-value"
   KeepResource     = "POC Redis x Coherence"

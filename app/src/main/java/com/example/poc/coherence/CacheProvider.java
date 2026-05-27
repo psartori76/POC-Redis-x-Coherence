@@ -1,5 +1,6 @@
 package com.example.poc.coherence;
 
+import java.util.Collection;
 import java.util.Optional;
 
 /**
@@ -28,6 +29,17 @@ interface CacheProvider extends AutoCloseable {
      * ou de uma alteracao feita pela propria aplicacao.
      */
     void put(Product product) throws Exception;
+
+    /**
+     * Grava varios produtos em lote. A implementacao padrao mantem o contrato
+     * simples, mas providers reais podem sobrescrever para usar putAll,
+     * pipeline ou outro mecanismo nativo mais eficiente.
+     */
+    default void putAll(Collection<Product> products) throws Exception {
+        for (Product product : products) {
+            put(product);
+        }
+    }
 
     /**
      * Remove apenas uma chave do cache ativo. Isso simula invalidacao pontual.

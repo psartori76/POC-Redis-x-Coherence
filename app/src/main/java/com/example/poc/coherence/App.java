@@ -71,6 +71,8 @@ public final class App {
          * membro encontra o cluster por WKA.
          */
         System.setProperty("coherence.cacheconfig", "coherence-cache-config.xml");
+        System.setProperty("coherence.pof.enabled", "true");
+        System.setProperty("coherence.pof.config", "pof-config.xml");
 
         String appMode = env("APP_MODE", "app");
         String nodeName = env("NODE_NAME", java.net.InetAddress.getLocalHost().getHostName());
@@ -99,7 +101,7 @@ public final class App {
         String dbPassword = env("DB_PASSWORD", "");
         int port = Integer.parseInt(env("HTTP_PORT", "8080"));
         String redisUrl = env("REDIS_URL", "redis://127.0.0.1:6379");
-        int cacheTtlSeconds = Integer.parseInt(env("CACHE_TTL_SECONDS", "300"));
+        int cacheTtlSeconds = Integer.parseInt(env("CACHE_TTL_SECONDS", "3600"));
         String activeCache = env("ACTIVE_CACHE_BACKEND", "redis");
         String managementBaseUrl = env("COHERENCE_MANAGEMENT_URL", "http://127.0.0.1:30000/management/coherence");
 
@@ -372,9 +374,7 @@ public final class App {
                 provider.clear();
             }
             List<Product> products = limit == 0 ? List.of() : repository.findRange(startId, limit);
-            for (Product product : products) {
-                provider.put(product);
-            }
+            provider.putAll(products);
             if (resetStats) {
                 metrics.reset(backend);
             }

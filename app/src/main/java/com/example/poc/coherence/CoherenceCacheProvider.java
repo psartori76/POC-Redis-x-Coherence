@@ -2,6 +2,9 @@ package com.example.poc.coherence;
 
 import com.tangosol.net.NamedMap;
 
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -43,6 +46,20 @@ final class CoherenceCacheProvider implements CacheProvider {
     @Override
     public void put(Product product) {
         products.put(product.id(), product);
+    }
+
+    /**
+     * Usa putAll para reduzir chamadas remotas durante warm-up. Com near-cache,
+     * essa carga tambem ajuda a deixar o front cache da app preenchido para a
+     * demonstracao logo apos o aquecimento.
+     */
+    @Override
+    public void putAll(Collection<Product> productBatch) {
+        Map<Long, Product> batch = new LinkedHashMap<>(productBatch.size());
+        for (Product product : productBatch) {
+            batch.put(product.id(), product);
+        }
+        products.putAll(batch);
     }
 
     /**
