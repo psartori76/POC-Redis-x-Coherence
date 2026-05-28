@@ -3,6 +3,8 @@
 Este workspace organiza uma POC para demonstrar troca transparente entre Redis
 e Oracle Coherence como camada de cache na frente de um Oracle Database em OCI.
 
+[![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/psartori76/POC-Redis-x-Coherence/releases/latest/download/poc-redis-coherence-orm.zip)
+
 ## Objetivo
 
 - manter o Oracle Database como fonte de verdade;
@@ -36,9 +38,16 @@ Topologia reduzida para demo:
 
 ## Ambiente OCI
 
-A POC foi preparada para usar uma VCN e subnets ja existentes. Os valores reais
-do ambiente devem ficar em `infra/terraform/poc.auto.tfvars`, que e ignorado
-pelo Git. Use `infra/terraform/terraform.tfvars.example` como modelo.
+A POC pode ser recriada de duas formas:
+
+1. **OCI Resource Manager Stack**, recomendado para qualquer pessoa recriar a
+   demo rapidamente pela Console OCI. Use o botao `Deploy to Oracle Cloud`
+   acima. O stack em `orm/` cria VCN, subnets, app/bastion, Oracle Database
+   Free, Redis, Coherence, massa de dados e outputs do tunnel SSH.
+2. **Terraform local**, usado para operacao assistida e tuning deste workspace.
+   Neste modo a POC usa uma VCN e subnets ja existentes. Os valores reais do
+   ambiente devem ficar em `infra/terraform/poc.auto.tfvars`, que e ignorado
+   pelo Git. Use `infra/terraform/terraform.tfvars.example` como modelo.
 
 - OCI CLI profile padrao: `DEFAULT`.
 - Regiao padrao: `us-ashburn-1`.
@@ -48,7 +57,10 @@ pelo Git. Use `infra/terraform/terraform.tfvars.example` como modelo.
 
 ## Tags Obrigatorias
 
-Todos os recursos criados recebem defined tags no namespace `0-ResourceControl`:
+No Terraform local, todos os recursos criados recebem defined tags no namespace
+`0-ResourceControl`. No stack do OCI Resource Manager, essas tags ficam como
+campos opcionais para manter o pacote portavel entre tenancies; preencha os
+campos `defined_tag_*` quando a tenancy exigir tags.
 
 | Tag | Valor |
 | --- | --- |
@@ -61,6 +73,30 @@ Todos os recursos criados recebem defined tags no namespace `0-ResourceControl`:
 | `ShutdownResource` | definido em `resource_control_tags.ShutdownResource` |
 
 ## Recriacao Rapida
+
+### OCI Resource Manager
+
+O pacote do stack fica em `dist/poc-redis-coherence-orm.zip` e e gerado por:
+
+```bash
+./scripts/package-orm-stack.sh
+```
+
+Para deploy pela Console OCI, clique no botao `Deploy to Oracle Cloud` no topo
+deste README. A tela do Resource Manager solicita compartment, chave SSH,
+CIDR liberado para SSH, senhas do Oracle e o tamanho da massa de produtos.
+Por padrao o stack cria uma VCN nova. Se a tenancy tiver quota restrita ou uma
+rede padronizada, selecione `network_mode = existing` e informe VCN, subnet
+publica e subnet privada existentes.
+Depois do apply, use o output `ssh_tunnel_command` para abrir o tunnel e acesse:
+
+```text
+http://localhost:8081/console
+http://localhost:8081/management-proxy/cluster
+http://localhost:30000/management/coherence/cluster
+```
+
+### Terraform local
 
 O runbook completo esta em `docs/poc-recreate-runbook.md`. Para executar a
 sequencia assistida, usando os arquivos locais de `.ssh`, `.secrets` e

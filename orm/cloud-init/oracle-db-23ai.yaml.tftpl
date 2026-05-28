@@ -1,0 +1,122 @@
+#cloud-config
+package_update: true
+packages:
+  - jq
+  - unzip
+  - wget
+  - curl
+runcmd:
+  - mkdir -p /opt/poc/logs
+  - |
+    timeout 20s systemctl disable --now firewalld || true
+  - |
+    set -euo pipefail
+    ADMIN_PASSWORD="$(printf '%s' '${db_admin_password_b64}' | base64 -d)"
+    APP_DB_PASSWORD="$(printf '%s' '${app_db_password_b64}' | base64 -d)"
+    APP_DB_PASSWORD_SQL="$(printf '%s' "$APP_DB_PASSWORD" | sed 's/"/""/g')"
+    PRODUCT_COUNT='${product_count}'
+
+    dnf -y install oracle-database-preinstall-23ai | tee /opt/poc/logs/preinstall.log
+    curl -JLo /opt/poc/oracle-database-free-23ai.rpm \
+      https://download.oracle.com/otn-pub/otn_software/db-free/oracle-database-free-23ai-1.0-1.el8.x86_64.rpm
+    dnf -y localinstall /opt/poc/oracle-database-free-23ai.rpm | tee /opt/poc/logs/software-install.log
+    printf '%s\n%s\n' "$ADMIN_PASSWORD" "$ADMIN_PASSWORD" | /etc/init.d/oracle-free-23ai configure | tee /opt/poc/logs/configure.log
+    cat >/etc/profile.d/oracle-free-23ai.sh <<'PROFILE'
+    export ORACLE_HOME=/opt/oracle/product/23ai/dbhomeFree
+    export ORACLE_SID=FREE
+    export PATH=$ORACLE_HOME/bin:$PATH
+    PROFILE
+    systemctl enable oracle-free-23ai || true
+
+    cat >/tmp/poc-coherence-demo.sql <<SQL
+    set define off
+    whenever sqlerror exit sql.sqlcode
+
+    alter session set container = FREEPDB1;
+
+    declare
+      user_count number;
+    begin
+      select count(*) into user_count from dba_users where username = 'COHDEMO';
+      if user_count = 0 then
+        execute immediate 'create user COHDEMO identified by "$APP_DB_PASSWORD_SQL" quota unlimited on users';
+      else
+        execute immediate 'alter user COHDEMO identified by "$APP_DB_PASSWORD_SQL" account unlock';
+      end if;
+    end;
+    /
+
+    grant create session, create table to COHDEMO;
+
+    declare
+      table_count number;
+    begin
+      select count(*) into table_count
+      from all_tables
+      where owner = 'COHDEMO'
+        and table_name = 'PRODUCTS';
+
+      if table_count = 0 then
+        execute immediate '
+          create table COHDEMO.products (
+            id number primary key,
+            name varchar2(200) not null,
+            price number(12,2) not null,
+            updated_at timestamp default systimestamp not null
+          )';
+      end if;
+    end;
+    /
+
+    merge into COHDEMO.products target
+    using (
+      select id,
+             case
+               when id = 1 then 'Seguro Auto'
+               when id = 2 then 'Seguro Vida'
+               when id = 3 then 'Conta Digital'
+               else
+                 case mod(id, 12)
+                   when 0 then 'Seguro Auto Plus'
+                   when 1 then 'Seguro Vida Familiar'
+                   when 2 then 'Conta Digital Premium'
+                   when 3 then 'Cartao Platinum'
+                   when 4 then 'Seguro Residencial'
+                   when 5 then 'Emprestimo Pessoal'
+                   when 6 then 'Plano Odonto'
+                   when 7 then 'Conta PJ'
+                   when 8 then 'Previdencia Privada'
+                   when 9 then 'Investimento Renda Fixa'
+                   when 10 then 'Seguro Viagem'
+                   else 'Consorcio Auto'
+                 end || ' ' || to_char(id, 'FM000000')
+             end name,
+             cast(
+               case
+                 when id = 1 then 89.90
+                 when id = 2 then 49.90
+                 when id = 3 then 0.00
+                 else round(9.90 + mod(id * 137, 25000) / 100, 2)
+               end as number(12,2)
+             ) price
+      from (
+        select level id
+        from dual
+        connect by level <= $PRODUCT_COUNT
+      )
+    ) source
+    on (target.id = source.id)
+    when matched then update set
+      target.name = source.name,
+      target.price = source.price,
+      target.updated_at = systimestamp
+    when not matched then insert (id, name, price, updated_at)
+      values (source.id, source.name, source.price, systimestamp);
+
+    commit;
+    exit
+    SQL
+
+    sudo su - oracle -c 'source /etc/profile.d/oracle-free-23ai.sh && sqlplus -s / as sysdba @/tmp/poc-coherence-demo.sql' | tee /opt/poc/logs/schema-seed.log
+    rm -f /tmp/poc-coherence-demo.sql
+  - echo "Oracle Database Free and COHDEMO schema ready for POC Redis x Oracle Coherence" > /etc/motd

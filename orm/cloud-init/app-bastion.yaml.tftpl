@@ -1,0 +1,102 @@
+#cloud-config
+package_update: true
+packages:
+  - java-17-openjdk-devel
+  - jq
+  - tar
+  - unzip
+  - wget
+  - curl
+  - tmux
+runcmd:
+  - mkdir -p /opt/poc/app /opt/poc/source /opt/poc/logs
+  - systemctl enable --now sshd
+  - |
+    cat >/etc/sysctl.d/99-poc-app-performance.conf <<'SYSCTL'
+    net.core.somaxconn = 1024
+    net.ipv4.tcp_keepalive_time = 60
+    SYSCTL
+    sysctl --system || true
+  - |
+    cat >/etc/systemd/system/poc-disable-thp.service <<'SERVICE'
+    [Unit]
+    Description=Disable Transparent Huge Pages for Java app benchmark
+
+    [Service]
+    Type=oneshot
+    ExecStart=/bin/bash -lc 'test -f /sys/kernel/mm/transparent_hugepage/enabled && echo never > /sys/kernel/mm/transparent_hugepage/enabled || true; test -f /sys/kernel/mm/transparent_hugepage/defrag && echo never > /sys/kernel/mm/transparent_hugepage/defrag || true'
+
+    [Install]
+    WantedBy=multi-user.target
+    SERVICE
+    systemctl daemon-reload
+    systemctl enable --now poc-disable-thp.service || true
+  - |
+    timeout 20s systemctl disable --now firewalld || true
+  - |
+    set -euo pipefail
+    APP_DB_PASSWORD="$(printf '%s' '${app_db_password_b64}' | base64 -d)"
+    SOURCE_ARCHIVE_URL="$(printf '%s' '${source_archive_b64}' | base64 -d)"
+    MAVEN_VERSION="3.9.11"
+
+    curl --fail --location --retry 10 --retry-delay 15 \
+      "https://archive.apache.org/dist/maven/maven-3/$MAVEN_VERSION/binaries/apache-maven-$MAVEN_VERSION-bin.tar.gz" \
+      -o /opt/poc/source/apache-maven.tar.gz
+    rm -rf "/opt/apache-maven-$MAVEN_VERSION" /opt/maven
+    tar -xzf /opt/poc/source/apache-maven.tar.gz -C /opt
+    ln -s "/opt/apache-maven-$MAVEN_VERSION" /opt/maven
+
+    rm -rf /opt/poc/source/*
+    curl --fail --location --retry 10 --retry-delay 15 "$SOURCE_ARCHIVE_URL" -o /opt/poc/source/source.zip
+    unzip -q /opt/poc/source/source.zip -d /opt/poc/source
+    APP_POM="$(find /opt/poc/source -maxdepth 4 -type f -path '*/app/pom.xml' | head -1)"
+    if [[ -z "$APP_POM" ]]; then
+      echo "Could not find app/pom.xml in $SOURCE_ARCHIVE_URL" >&2
+      exit 1
+    fi
+    APP_SRC_DIR="$(dirname "$APP_POM")"
+    (cd "$APP_SRC_DIR" && /opt/maven/bin/mvn -q -DskipTests package)
+    cp "$APP_SRC_DIR/target/coherence-cache-demo-1.0.0.jar" /opt/poc/app/coherence-cache-demo.jar
+    chown -R opc:opc /opt/poc/app
+
+    cat >/etc/poc-cache-demo.env <<ENV
+    APP_MODE=app
+    NODE_IP=$(hostname -I | awk '{print $1}')
+    NODE_NAME=app-bastion
+    HTTP_PORT=8080
+    DB_URL=jdbc:oracle:thin:@//${db_private_ip}:1521/FREEPDB1
+    DB_USER=COHDEMO
+    DB_PASSWORD=$APP_DB_PASSWORD
+    REDIS_URL=redis://${redis_private_ip}:6379
+    ACTIVE_CACHE_BACKEND=${active_cache_backend}
+    CACHE_TTL_SECONDS=${cache_ttl_seconds}
+    COHERENCE_WKA=${coherence_private_ip}
+    COHERENCE_MANAGEMENT_URL=http://${coherence_private_ip}:30000/management/coherence
+    JAVA_OPTS=--add-opens=java.base/java.lang=ALL-UNNAMED -Xms1g -Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=100 -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -Djava.net.preferIPv4Stack=true -Dcoherence.pof.enabled=true -Dcoherence.pof.config=pof-config.xml -Dpoc.near.high.units=50000 -Dpoc.near.expiry=60m -Dpoc.coherence.expiry=60m -Dpoc.coherence.backup.count=0
+    ENV
+    chmod 600 /etc/poc-cache-demo.env
+
+    cat >/etc/systemd/system/poc-cache-demo.service <<'SERVICE'
+    [Unit]
+    Description=POC Redis/Coherence Cache Demo App
+    After=network-online.target
+    Wants=network-online.target
+
+    [Service]
+    Type=simple
+    User=opc
+    EnvironmentFile=/etc/poc-cache-demo.env
+    WorkingDirectory=/opt/poc/app
+    ExecStartPre=/bin/bash -lc 'for i in {1..120}; do timeout 2 bash -c "</dev/tcp/$COHERENCE_WKA/7575" && exit 0; sleep 5; done; exit 1'
+    ExecStart=/bin/bash -lc 'exec /usr/bin/java $JAVA_OPTS -Dcoherence.cluster=poc-coherence -Dcoherence.role=cache-client -Dcoherence.localhost="$NODE_IP" -Dcoherence.wka="$COHERENCE_WKA" -Dcoherence.localport=7575 -Dcoherence.distributed.localstorage=false -jar /opt/poc/app/coherence-cache-demo.jar'
+    Restart=always
+    RestartSec=5
+
+    [Install]
+    WantedBy=multi-user.target
+    SERVICE
+
+    systemctl daemon-reload
+    systemctl enable poc-cache-demo.service
+    systemctl restart poc-cache-demo.service
+  - echo "POC app-bastion ready. Use SSH tunnel to http://localhost:8081/console" > /etc/motd

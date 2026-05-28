@@ -1,0 +1,358 @@
+title: "POC Redis x Oracle Coherence"
+description: "Deploy a complete OCI demo with Oracle Database Free, Redis, Oracle Coherence, a Java CacheProvider app, observability page and SSH tunnel outputs."
+schemaVersion: 1.1.0
+version: "20260527"
+locale: "en"
+
+variableGroups:
+  - title: "Destination"
+    variables:
+      - compartment_ocid
+      - region
+      - availability_domain_name
+      - tenancy_ocid
+  - title: "Access"
+    variables:
+      - ssh_public_key
+      - allowed_ssh_cidr
+  - title: "Optional OCI defined tags"
+    variables:
+      - defined_tag_namespace
+      - defined_tag_created_by
+      - defined_tag_keep_resource
+      - defined_tag_created_at
+      - defined_tag_shutdown_time
+      - defined_tag_team
+      - defined_tag_delete_resource
+      - defined_tag_shutdown_resource
+  - title: "POC configuration"
+    variables:
+      - name_prefix
+      - db_admin_password
+      - app_db_password
+      - product_count
+      - active_cache_backend
+      - source_archive_url
+  - title: "Network"
+    variables:
+      - network_mode
+      - vcn_cidr
+      - public_subnet_cidr
+      - private_subnet_cidr
+      - existing_vcn_ocid
+      - existing_vcn_cidr
+      - existing_public_subnet_ocid
+      - existing_private_subnet_ocid
+  - title: "Compute sizing"
+    variables:
+      - shape
+      - app_bastion_ocpus
+      - app_bastion_memory_gbs
+      - db_ocpus
+      - db_memory_gbs
+      - redis_ocpus
+      - redis_memory_gbs
+      - coherence_ocpus
+      - coherence_memory_gbs
+  - title: "Advanced"
+    variables:
+      - oracle_linux_version
+      - cache_ttl_seconds
+
+variables:
+  tenancy_ocid:
+    type: string
+    visible: false
+    required: true
+    title: "Tenancy OCID"
+
+  region:
+    type: oci:identity:region:name
+    required: true
+    title: "Region"
+    default: "us-ashburn-1"
+
+  compartment_ocid:
+    type: oci:identity:compartment:id
+    required: true
+    title: "Compartment"
+    description: "Compartment where the POC VCN, compute instances and gateways will be created."
+
+  availability_domain_name:
+    type: oci:identity:availabilitydomain:name
+    required: false
+    title: "Availability Domain"
+    description: "Leave empty to use the first AD returned by the tenancy."
+    dependsOn:
+      compartmentId: ${tenancy_ocid}
+
+  ssh_public_key:
+    type: oci:core:ssh:publickey
+    required: true
+    title: "SSH Public Key"
+    description: "Public key for the opc user on every VM. Keep the matching private key locally to open the tunnel."
+
+  allowed_ssh_cidr:
+    type: string
+    required: true
+    title: "Allowed SSH CIDR"
+    description: "CIDR allowed to SSH into the public app-bastion. Use your workstation public IP as /32 when possible."
+    default: "0.0.0.0/0"
+
+  defined_tag_namespace:
+    type: string
+    required: false
+    title: "Defined Tag Namespace"
+    description: "Optional. Fill only when your tenancy requires defined tags on resources."
+    default: ""
+
+  defined_tag_created_by:
+    type: string
+    required: false
+    title: "Defined Tag: CreatedBy"
+    default: ""
+
+  defined_tag_keep_resource:
+    type: string
+    required: false
+    title: "Defined Tag: KeepResource"
+    default: ""
+
+  defined_tag_created_at:
+    type: string
+    required: false
+    title: "Defined Tag: CreatedAt"
+    default: ""
+
+  defined_tag_shutdown_time:
+    type: string
+    required: false
+    title: "Defined Tag: ShutdownTime"
+    default: ""
+
+  defined_tag_team:
+    type: string
+    required: false
+    title: "Defined Tag: Team"
+    default: ""
+
+  defined_tag_delete_resource:
+    type: string
+    required: false
+    title: "Defined Tag: DeleteResource"
+    default: ""
+
+  defined_tag_shutdown_resource:
+    type: string
+    required: false
+    title: "Defined Tag: ShutdownResource"
+    default: ""
+
+  name_prefix:
+    type: string
+    required: true
+    title: "Resource Prefix"
+    default: "poc-rxc"
+
+  db_admin_password:
+    type: password
+    confirmation: true
+    required: true
+    title: "Oracle Admin Password"
+    description: "Password for SYS/SYSTEM in Oracle Database Free. Avoid whitespace and quotes."
+
+  app_db_password:
+    type: password
+    confirmation: true
+    required: true
+    title: "Application DB Password"
+    description: "Password for the COHDEMO schema. Avoid whitespace and quotes."
+
+  product_count:
+    type: integer
+    required: true
+    title: "Product Rows"
+    description: "Number of rows seeded into COHDEMO.products for robot tests."
+    default: 50000
+    minimum: 3
+    maximum: 250000
+
+  active_cache_backend:
+    type: enum
+    required: true
+    title: "Initial Cache Backend"
+    default: "redis"
+    enum:
+      - "redis"
+      - "coherence"
+
+  source_archive_url:
+    type: string
+    required: true
+    title: "Application Source ZIP"
+    description: "Public repository ZIP downloaded by the VMs to build the Java application."
+    default: "https://codeload.github.com/psartori76/POC-Redis-x-Coherence/zip/refs/heads/main"
+
+  network_mode:
+    type: enum
+    required: true
+    title: "Network Mode"
+    description: "Create a new VCN by default, or reuse an existing VCN/subnets when quota or governance requires it."
+    default: "create_new"
+    enum:
+      - "create_new"
+      - "existing"
+
+  vcn_cidr:
+    type: string
+    required: true
+    title: "VCN CIDR"
+    default: "10.42.0.0/16"
+
+  public_subnet_cidr:
+    type: string
+    required: true
+    title: "Public Subnet CIDR"
+    default: "10.42.0.0/24"
+
+  private_subnet_cidr:
+    type: string
+    required: true
+    title: "Private Subnet CIDR"
+    default: "10.42.1.0/24"
+
+  existing_vcn_ocid:
+    type: string
+    required: false
+    title: "Existing VCN OCID"
+    description: "Required only when Network Mode is existing."
+    default: ""
+
+  existing_vcn_cidr:
+    type: string
+    required: false
+    title: "Existing VCN CIDR"
+    description: "Used for internal security rules when Network Mode is existing."
+    default: "10.0.0.0/16"
+
+  existing_public_subnet_ocid:
+    type: string
+    required: false
+    title: "Existing Public Subnet OCID"
+    description: "Required only when Network Mode is existing. The app-bastion receives a public IP here."
+    default: ""
+
+  existing_private_subnet_ocid:
+    type: string
+    required: false
+    title: "Existing Private Subnet OCID"
+    description: "Required only when Network Mode is existing. Oracle, Redis and Coherence are created here."
+    default: ""
+
+  shape:
+    type: oci:core:instanceshapewithflex:name
+    required: true
+    title: "Compute Shape"
+    default: "VM.Standard.E4.Flex"
+    dependsOn:
+      compartmentId: ${compartment_ocid}
+      availabilityDomain: ${availability_domain_name}
+
+  app_bastion_ocpus:
+    type: integer
+    required: true
+    title: "App OCPUs"
+    default: 2
+    minimum: 1
+
+  app_bastion_memory_gbs:
+    type: integer
+    required: true
+    title: "App Memory GB"
+    default: 16
+    minimum: 8
+
+  db_ocpus:
+    type: integer
+    required: true
+    title: "DB OCPUs"
+    default: 2
+    minimum: 1
+
+  db_memory_gbs:
+    type: integer
+    required: true
+    title: "DB Memory GB"
+    default: 32
+    minimum: 16
+
+  redis_ocpus:
+    type: integer
+    required: true
+    title: "Redis OCPUs"
+    default: 2
+    minimum: 1
+
+  redis_memory_gbs:
+    type: integer
+    required: true
+    title: "Redis Memory GB"
+    default: 8
+    minimum: 4
+
+  coherence_ocpus:
+    type: integer
+    required: true
+    title: "Coherence OCPUs"
+    default: 2
+    minimum: 1
+
+  coherence_memory_gbs:
+    type: integer
+    required: true
+    title: "Coherence Memory GB"
+    default: 16
+    minimum: 8
+
+  oracle_linux_version:
+    type: string
+    required: true
+    title: "Oracle Linux Version"
+    default: "8"
+
+  cache_ttl_seconds:
+    type: integer
+    required: true
+    title: "Redis Cache TTL Seconds"
+    default: 3600
+    minimum: 60
+
+outputGroups:
+  - title: "Access"
+    outputs:
+      - app_bastion_public_ip
+      - ssh_tunnel_command
+      - console_url_after_tunnel
+      - observability_url_after_tunnel
+      - coherence_rest_url_after_tunnel
+      - health_check_via_bastion
+
+outputs:
+  app_bastion_public_ip:
+    type: string
+    title: "App Bastion Public IP"
+  ssh_tunnel_command:
+    type: string
+    title: "SSH Tunnel Command"
+  console_url_after_tunnel:
+    type: link
+    title: "Console URL"
+  observability_url_after_tunnel:
+    type: link
+    title: "Observability URL"
+  coherence_rest_url_after_tunnel:
+    type: link
+    title: "Coherence REST URL"
+  health_check_via_bastion:
+    type: string
+    title: "Health Check Command"

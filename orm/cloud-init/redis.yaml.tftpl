@@ -1,0 +1,55 @@
+#cloud-config
+package_update: true
+packages:
+  - jq
+  - unzip
+  - wget
+  - curl
+runcmd:
+  - |
+    cat >/etc/sysctl.d/99-poc-redis-performance.conf <<'SYSCTL'
+    vm.overcommit_memory = 1
+    net.core.somaxconn = 1024
+    net.ipv4.tcp_keepalive_time = 60
+    SYSCTL
+    sysctl --system || true
+  - |
+    cat >/etc/systemd/system/poc-disable-thp.service <<'SERVICE'
+    [Unit]
+    Description=Disable Transparent Huge Pages for cache benchmark
+
+    [Service]
+    Type=oneshot
+    ExecStart=/bin/bash -lc 'test -f /sys/kernel/mm/transparent_hugepage/enabled && echo never > /sys/kernel/mm/transparent_hugepage/enabled || true; test -f /sys/kernel/mm/transparent_hugepage/defrag && echo never > /sys/kernel/mm/transparent_hugepage/defrag || true'
+
+    [Install]
+    WantedBy=multi-user.target
+    SERVICE
+    systemctl daemon-reload
+    systemctl enable --now poc-disable-thp.service || true
+  - |
+    dnf -y module enable redis:6 || true
+    dnf -y install redis
+  - |
+    set_redis_config() {
+      key="$1"
+      value="$2"
+      if grep -Eq "^[#[:space:]]*$${key}[[:space:]]+" /etc/redis.conf; then
+        sed -i -E "s|^[#[:space:]]*$${key}[[:space:]]+.*|$${key} $${value}|" /etc/redis.conf
+      else
+        printf '%s %s\n' "$key" "$value" >> /etc/redis.conf
+      fi
+    }
+    set_redis_config bind "0.0.0.0"
+    set_redis_config protected-mode no
+    set_redis_config save '""'
+    set_redis_config appendonly no
+    set_redis_config tcp-keepalive 60
+    set_redis_config timeout 0
+    set_redis_config maxmemory 6gb
+    set_redis_config maxmemory-policy allkeys-lru
+    set_redis_config io-threads 2
+  - |
+    timeout 20s systemctl disable --now firewalld || true
+  - systemctl enable --now redis
+  - echo "Redis ready for POC Redis x Oracle Coherence" > /etc/motd
